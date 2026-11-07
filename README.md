@@ -8,7 +8,7 @@ No sensor addresses or pairing needed.
 
 | Model | Readings | Product page |
 | --- | --- | --- |
-| ThermoPro TP357S | Temperature, humidity, low battery status | [TP357 series](https://temppro.com/products/tp357-bluetooth-hygrometer-thermometer) |
+| ThermoPro TP357S | Temperature, humidity, battery status | [TP357 series](https://temppro.com/products/tp357-bluetooth-hygrometer-thermometer) |
 
 ## Build and run
 
