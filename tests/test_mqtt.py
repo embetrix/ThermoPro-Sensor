@@ -255,6 +255,52 @@ async def test_tls(binary, openssl, directory):
             await stop(process)
             await broker.close()
 
+    # Reject an untrusted certificate repeatedly, then recover in the same process
+    # when the broker replaces it with a trusted certificate.
+    bad_cert = Path(directory) / "untrusted.pem"
+    bad_key = Path(directory) / "untrusted-key.pem"
+    subprocess.run([openssl, "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+                    "-keyout", str(bad_key), "-out", str(bad_cert), "-subj", "/CN=mqtt-test.invalid",
+                    "-addext", "subjectAltName=IP:127.0.0.1"],
+                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    context.load_cert_chain(bad_cert, bad_key)
+    broker = await Broker().start(context=context)
+    process = await client(binary, directory, broker.port, tls=True, ca_file=str(cert))
+    try:
+        await reading(process, temperature=133)
+        for delay in (1, 2):
+            while True:
+                message = await asyncio.wait_for(process.stderr.readline(), 4)
+                assert message and b"network stopped" not in message and b"test-token" not in message
+                if b"connection failed, retrying" in message:
+                    assert f"retrying in {delay} seconds".encode() in message
+                    break
+            assert broker.clients.empty(), "untrusted broker completed TLS"
+        await reading(process, temperature=250)
+        context.load_cert_chain(cert, key)
+        reader, writer = await broker.connection()
+        mid, data = await publish(reader, CONNECT)
+        assert data == {"device": FIRST}
+        await ack(writer, mid)
+        mid, data = await publish(reader, TELEMETRY)
+        assert data[FIRST][0]["values"]["temperature_c"] == 25.0
+        await ack(writer, mid)
+        await quiet(reader)
+
+        # A successful MQTT connection resets the retry delay.
+        writer.close()
+        await writer.wait_closed()
+        while True:
+            message = await asyncio.wait_for(process.stderr.readline(), 3)
+            assert message and b"network stopped" not in message and b"test-token" not in message
+            if b"connection failed, retrying" in message:
+                assert b"retrying in 1 seconds" in message
+                break
+        # Shutdown must also work promptly while waiting to retry.
+    finally:
+        await stop(process)
+        await broker.close()
+
 
 async def main():
     binary, openssl = sys.argv[1:]

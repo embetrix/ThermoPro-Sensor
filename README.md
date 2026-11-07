@@ -75,11 +75,11 @@ chmod 600 config/thermopro-sensor.local.json
 ./build/thermopro-sensor config/thermopro-sensor.local.json
 ```
 
-During an outage, SQLite and JSON continue. MQTT retries and keeps the latest
-waiting reading per sensor, up to `max_pending_sensors` (default 256).
+During an outage, SQLite and JSON continue. MQTT retries automatically, including
+after TLS failures, with a delay capped at 30 seconds. It keeps the latest waiting
+reading per sensor, up to `max_pending_sensors` (default 256).
 Pending readings are lost on exit. SQLite history is not replayed over MQTT.
-Check stderr for disabled, connecting, offline, or error messages. Fix settings
-and restart if the MQTT network thread stops.
+Check stderr for connection status and errors. Restart after configuration changes.
 
 ## Run as a service
 

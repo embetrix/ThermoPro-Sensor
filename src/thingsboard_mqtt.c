@@ -33,6 +33,7 @@
 #define THINGSBOARD_CONNECT_TOPIC "v1/gateway/connect"
 #define THINGSBOARD_TELEMETRY_TOPIC "v1/gateway/telemetry"
 #define MQTT_STATUS_INTERVAL_SECONDS 30
+#define MQTT_RETRY_MAX_SECONDS 30
 
 /* Each slot holds one waiting reading, plus at most one message being sent */
 typedef struct {
@@ -53,7 +54,6 @@ struct ThingsBoardMqtt {
     bool connected;
     bool stopping;
     bool thread_started;
-    bool network_stopped;
     time_t last_status;
     pthread_t thread;
     char host[256];
@@ -190,16 +190,38 @@ static void *network_loop(void *userdata)
     ThingsBoardMqtt *output = userdata;
     fprintf(stderr, "MQTT connecting to %s:%d\n", output->host, output->port);
     int error = mosquitto_connect(output->client, output->host, output->port, 60);
-    if (error != MOSQ_ERR_SUCCESS)
-        log_network_error(output, "connection failed, retrying", error, errno);
-    error = mosquitto_loop_forever(output->client, 1000, 1);
-    int system_error = errno;
-    pthread_mutex_lock(&output->mutex);
-    output->network_stopped = true;
-    output->connected = false;
-    if (!output->stopping)
-        log_network_error(output, "network stopped, check settings and restart", error, system_error);
-    pthread_mutex_unlock(&output->mutex);
+    unsigned retry_delay = 1;
+    /* Own the retry loop: loop_forever exits on TLS and other handshake errors. */
+    for (;;) {
+        int system_error = errno;
+        pthread_mutex_lock(&output->mutex);
+        bool stopping = output->stopping;
+        if (output->connected)
+            retry_delay = 1;
+        if (error != MOSQ_ERR_SUCCESS) {
+            output->connected = false;
+            output->last_status = monotonic_seconds();
+        }
+        pthread_mutex_unlock(&output->mutex);
+        if (stopping)
+            break;
+        if (error != MOSQ_ERR_SUCCESS) {
+            char action[80];
+            snprintf(action, sizeof(action), "connection failed, retrying in %u seconds", retry_delay);
+            log_network_error(output, action, error, system_error);
+            struct timespec delay = {.tv_sec = retry_delay};
+            while (nanosleep(&delay, &delay) != 0 && errno == EINTR)
+                ;
+            if (retry_delay < MQTT_RETRY_MAX_SECONDS) {
+                retry_delay *= 2;
+                if (retry_delay > MQTT_RETRY_MAX_SECONDS)
+                    retry_delay = MQTT_RETRY_MAX_SECONDS;
+            }
+            error = mosquitto_reconnect(output->client);
+        } else {
+            error = mosquitto_loop(output->client, 1000, 1);
+        }
+    }
     return NULL;
 }
 
@@ -231,8 +253,6 @@ bool thingsboard_mqtt_open(ThingsBoardMqtt **result, const MqttConfig *config)
     mosquitto_disconnect_callback_set(output->client, on_disconnect);
     mosquitto_publish_callback_set(output->client, on_publish);
     int error = mosquitto_username_pw_set(output->client, config->access_token, NULL);
-    if (error == MOSQ_ERR_SUCCESS)
-        error = mosquitto_reconnect_delay_set(output->client, 1, 30, true);
     if (error == MOSQ_ERR_SUCCESS && config->tls) {
         if (config->ca_file[0])
             error = mosquitto_tls_set(output->client, config->ca_file, NULL, NULL, NULL, NULL);
@@ -299,7 +319,7 @@ void thingsboard_mqtt_report(ThingsBoardMqtt *output, const Sensor *sensors, siz
                 pending++;
         fprintf(stderr, "MQTT offline (%s:%d): %s, %zu sensors waiting\n",
                 output->host, output->port,
-                output->network_stopped ? "network stopped, check settings and restart" : "waiting for connection or retry",
+                "waiting for connection or retry",
                 pending);
         output->last_status = now;
     }
