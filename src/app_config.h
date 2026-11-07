@@ -25,10 +25,25 @@
 #include <stdbool.h>
 #include <json-c/json.h>
 
+typedef enum {
+    DATABASE_PER_REPORT,
+    DATABASE_EVERY_PACKET
+} DatabaseLoggingMode;
+
+typedef struct {
+    /* An empty path disables logging, zero days disables age cleanup */
+    char path[4096];
+    unsigned retention_days;
+    /* Zero means no size limit, MB uses 1,000,000 bytes */
+    unsigned max_size_mb;
+    DatabaseLoggingMode logging_mode;
+} DatabaseConfig;
+
 typedef struct {
     unsigned polling_period_seconds;
     bool duplicate_data;
     char adapter_path[64];
+    DatabaseConfig database;
 } AppConfig;
 
 /* Check discovery settings and fill the config */

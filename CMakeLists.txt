@@ -8,6 +8,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(JSON_C REQUIRED IMPORTED_TARGET json-c)
 pkg_check_modules(SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
+find_package(SQLite3 REQUIRED)
 
 function(sensor_protocol_option name default description minimum maximum)
     set(${name} "${default}" CACHE STRING "${description}")
@@ -38,9 +39,10 @@ add_library(thermopro_core STATIC
     src/app_config.c
     src/thermopro_decoder.c
     src/sensor_registry.c
-    src/json_output.c)
+    src/json_output.c
+    src/sqlite_store.c)
 target_include_directories(thermopro_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(thermopro_core PUBLIC PkgConfig::JSON_C)
+target_link_libraries(thermopro_core PUBLIC PkgConfig::JSON_C SQLite::SQLite3)
 target_compile_definitions(thermopro_core PUBLIC
     THERMOPRO_PAYLOAD_LENGTH=${THERMOPRO_PAYLOAD_LENGTH_VALUE}
     THERMOPRO_PACKET_MARKER=${THERMOPRO_PACKET_MARKER_VALUE}

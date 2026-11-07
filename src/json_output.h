@@ -28,7 +28,7 @@
 
 /* The caller must free the returned object with json_object_put() */
 json_object *sensor_to_json(const Sensor *sensor);
-/* Print one JSON line per sensor to stdout, then clear the fresh flags */
-bool json_output_report(Sensor *sensors, size_t count);
+/* Print one JSON line per sensor and leave fresh flags unchanged */
+bool json_output_report(const Sensor *sensors, size_t count);
 
 #endif

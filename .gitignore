@@ -17,3 +17,9 @@ __pycache__/
 /thermopro-sensor
 /test_sensor
 /*.a
+/test_sqlite
+
+# Local sensor history
+*.db
+*.db-wal
+*.db-shm

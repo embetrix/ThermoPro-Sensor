@@ -23,6 +23,7 @@
 #include "bluez_scanner.h"
 #include "json_output.h"
 #include "sensor_registry.h"
+#include "sqlite_store.h"
 #include "thermopro_decoder.h"
 
 #include <errno.h>
@@ -38,16 +39,22 @@
 #define PROPERTIES_IFACE "org.freedesktop.DBus.Properties"
 #define OBJECT_MANAGER_IFACE "org.freedesktop.DBus.ObjectManager"
 #define USEC_PER_SEC UINT64_C(1000000)
+#define CLEANUP_INTERVAL_USEC (UINT64_C(3600) * USEC_PER_SEC)
 
 typedef struct {
     const AppConfig *config;
     SensorRegistry registry;
+    SqliteStore store;
+    Sensor *packets;
+    size_t packet_count;
+    int callback_error;
+    bool shutting_down;
 } ScannerContext;
 
 /* Return D-Bus parsing errors to the caller */
 #define BUS_TRY(expression) do { int result_ = (expression); if (result_ < 0) return result_; } while (0)
 
-static int read_manufacturer_data(sd_bus_message *message, Sensor *sensor)
+static int read_manufacturer_data(sd_bus_message *message, Sensor *sensor, ScannerContext *context)
 {
     BUS_TRY(sd_bus_message_enter_container(message, 'a', "{qv}"));
     int r;
@@ -58,7 +65,14 @@ static int read_manufacturer_data(sd_bus_message *message, Sensor *sensor)
         BUS_TRY(sd_bus_message_read(message, "q", &manufacturer));
         BUS_TRY(sd_bus_message_enter_container(message, 'v', "ay"));
         BUS_TRY(sd_bus_message_read_array(message, 'y', &bytes, &length));
-        thermopro_decode(sensor, manufacturer, bytes, length);
+        if (thermopro_decode(sensor, manufacturer, bytes, length) && context->store.db &&
+            context->config->database.logging_mode == DATABASE_EVERY_PACKET) {
+            Sensor *packets = realloc(context->packets, (context->packet_count + 1) * sizeof(*packets));
+            if (!packets)
+                return -ENOMEM;
+            context->packets = packets;
+            context->packets[context->packet_count++] = *sensor;
+        }
         BUS_TRY(sd_bus_message_exit_container(message));
         BUS_TRY(sd_bus_message_exit_container(message));
     }
@@ -67,7 +81,7 @@ static int read_manufacturer_data(sd_bus_message *message, Sensor *sensor)
     return sd_bus_message_exit_container(message);
 }
 
-static int read_properties(sd_bus_message *message, Sensor *sensor)
+static int read_properties(sd_bus_message *message, Sensor *sensor, ScannerContext *context)
 {
     BUS_TRY(sd_bus_message_enter_container(message, 'a', "{sv}"));
     int r;
@@ -81,7 +95,7 @@ static int read_properties(sd_bus_message *message, Sensor *sensor)
             BUS_TRY(sd_bus_message_exit_container(message));
         } else if (!strcmp(key, "ManufacturerData")) {
             BUS_TRY(sd_bus_message_enter_container(message, 'v', "a{qv}"));
-            BUS_TRY(read_manufacturer_data(message, sensor));
+            BUS_TRY(read_manufacturer_data(message, sensor, context));
             BUS_TRY(sd_bus_message_exit_container(message));
         } else {
             BUS_TRY(sd_bus_message_skip(message, "v"));
@@ -93,10 +107,20 @@ static int read_properties(sd_bus_message *message, Sensor *sensor)
     return sd_bus_message_exit_container(message);
 }
 
-static int properties_changed(sd_bus_message *message, void *userdata, sd_bus_error *error)
+static int remember_readings(ScannerContext *context, Sensor *sensor)
 {
-    (void)error;
-    ScannerContext *context = userdata;
+    /* RSSI may follow manufacturer data in the same event */
+    for (size_t i = 0; i < context->packet_count; i++) {
+        context->packets[i].has_rssi = sensor->has_rssi;
+        context->packets[i].rssi = sensor->rssi;
+    }
+    if (!sqlite_store_write(&context->store, context->packets, context->packet_count))
+        return -EIO;
+    return sensor_registry_remember(&context->registry, sensor);
+}
+
+static int read_changed(sd_bus_message *message, ScannerContext *context)
+{
     Sensor candidate = {0};
     Sensor *sensor = sensor_registry_resolve(&context->registry, context->config->adapter_path,
                                              sd_bus_message_get_path(message), &candidate);
@@ -106,7 +130,7 @@ static int properties_changed(sd_bus_message *message, void *userdata, sd_bus_er
     BUS_TRY(sd_bus_message_read(message, "s", &interface));
     if (strcmp(interface, DEVICE_IFACE))
         return 0;
-    BUS_TRY(read_properties(message, sensor));
+    BUS_TRY(read_properties(message, sensor, context));
     /* Clear the saved RSSI if BlueZ marks it invalid */
     BUS_TRY(sd_bus_message_enter_container(message, 'a', "s"));
     const char *key;
@@ -114,13 +138,11 @@ static int properties_changed(sd_bus_message *message, void *userdata, sd_bus_er
     while ((r = sd_bus_message_read(message, "s", &key)) > 0)
         if (!strcmp(key, "RSSI"))
             sensor->has_rssi = false;
-    return r < 0 ? r : sensor_registry_remember(&context->registry, sensor);
+    return r < 0 ? r : remember_readings(context, sensor);
 }
 
-static int interfaces_added(sd_bus_message *message, void *userdata, sd_bus_error *error)
+static int read_added(sd_bus_message *message, ScannerContext *context)
 {
-    (void)error;
-    ScannerContext *context = userdata;
     const char *path;
     BUS_TRY(sd_bus_message_read(message, "o", &path));
     Sensor candidate = {0};
@@ -135,13 +157,41 @@ static int interfaces_added(sd_bus_message *message, void *userdata, sd_bus_erro
         BUS_TRY(sd_bus_message_read(message, "s", &interface));
         if (!strcmp(interface, DEVICE_IFACE)) {
             sensor->has_rssi = false;
-            BUS_TRY(read_properties(message, sensor));
+            BUS_TRY(read_properties(message, sensor, context));
         } else {
             BUS_TRY(sd_bus_message_skip(message, "a{sv}"));
         }
         BUS_TRY(sd_bus_message_exit_container(message));
     }
-    return r < 0 ? r : sensor_registry_remember(&context->registry, sensor);
+    return r < 0 ? r : remember_readings(context, sensor);
+}
+
+static int handle_event(sd_bus_message *message, ScannerContext *context,
+                        int (*read_event)(sd_bus_message *, ScannerContext *))
+{
+    if (context->shutting_down || context->callback_error)
+        return 0;
+    context->packet_count = 0;
+    int result = read_event(message, context);
+    free(context->packets);
+    context->packets = NULL;
+    context->packet_count = 0;
+    /* Stop scanning if a D-Bus signal handler fails */
+    if (result < 0)
+        context->callback_error = result;
+    return 0;
+}
+
+static int properties_changed(sd_bus_message *message, void *userdata, sd_bus_error *error)
+{
+    (void)error;
+    return handle_event(message, userdata, read_changed);
+}
+
+static int interfaces_added(sd_bus_message *message, void *userdata, sd_bus_error *error)
+{
+    (void)error;
+    return handle_event(message, userdata, read_added);
 }
 
 static int set_discovery_filter(sd_bus *bus, const AppConfig *config, sd_bus_error *error)
@@ -172,6 +222,8 @@ int bluez_scanner_run(const AppConfig *config, const volatile sig_atomic_t *stop
     sd_bus *bus = NULL;
     sd_bus_error error = SD_BUS_ERROR_NULL;
     bool discovery_started = false;
+    if (!sqlite_store_open(&context.store, &config->database))
+        return EXIT_FAILURE;
     int r = sd_bus_open_system(&bus);
     if (r < 0)
         goto done;
@@ -195,10 +247,16 @@ int bluez_scanner_run(const AppConfig *config, const volatile sig_atomic_t *stop
             config->adapter_path, config->polling_period_seconds, config->duplicate_data ? "true" : "false");
     uint64_t interval = config->polling_period_seconds * USEC_PER_SEC;
     uint64_t next_report = monotonic_usec() + interval;
+    bool retention = context.store.db && config->database.retention_days;
+    uint64_t next_cleanup = retention ? monotonic_usec() + CLEANUP_INTERVAL_USEC : UINT64_MAX;
     while (!*stopping) {
         /* Limit each batch so incoming messages do not delay reports */
         for (unsigned i = 0; i < 64 && !*stopping; i++) {
             r = sd_bus_process(bus, NULL);
+            if (context.callback_error) {
+                r = context.callback_error;
+                goto done;
+            }
             if (r == -EINTR)
                 break;
             if (r < 0)
@@ -209,25 +267,41 @@ int bluez_scanner_run(const AppConfig *config, const volatile sig_atomic_t *stop
         if (*stopping)
             break;
         uint64_t now = monotonic_usec();
+        if (retention && now >= next_cleanup) {
+            if (!sqlite_store_prune(&context.store, time(NULL))) {
+                r = -EIO;
+                goto done;
+            }
+            next_cleanup = now + CLEANUP_INTERVAL_USEC;
+        }
         if (now >= next_report) {
+            if (config->database.logging_mode == DATABASE_PER_REPORT &&
+                !sqlite_store_write(&context.store, context.registry.sensors, context.registry.count)) {
+                r = -EIO;
+                goto done;
+            }
             if (!json_output_report(context.registry.sensors, context.registry.count)) {
                 r = -EIO;
                 goto done;
             }
+            for (size_t i = 0; i < context.registry.count; i++)
+                context.registry.sensors[i].fresh = false;
             next_report = now + interval;
         }
         /* Keep processing while messages are waiting */
         if (r > 0)
             continue;
         now = monotonic_usec();
-        r = sd_bus_wait(bus, now < next_report ? next_report - now : 0);
+        uint64_t deadline = next_report < next_cleanup ? next_report : next_cleanup;
+        r = sd_bus_wait(bus, now < deadline ? deadline - now : 0);
         if (r < 0 && r != -EINTR)
             goto done;
     }
     r = 0;
 done:
+    context.shutting_down = true;
     if (r < 0)
-        fprintf(stderr, "Bluetooth error: %s\nCheck that BlueZ is running, the adapter is on, and your user has Bluetooth access\n",
+        fprintf(stderr, "Scanner stopped: %s\n",
                 error.message ? error.message : strerror(-r));
     if (discovery_started)
         sd_bus_call_method(bus, BLUEZ, config->adapter_path, ADAPTER_IFACE,
@@ -235,5 +309,6 @@ done:
     sd_bus_error_free(&error);
     sd_bus_flush_close_unref(bus);
     sensor_registry_clear(&context.registry);
+    sqlite_store_close(&context.store);
     return r < 0 ? EXIT_FAILURE : EXIT_SUCCESS;
 }

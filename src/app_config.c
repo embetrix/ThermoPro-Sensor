@@ -29,7 +29,7 @@
 /* Check the config without using Bluetooth */
 bool app_config_parse(json_object *root, AppConfig *config)
 {
-    json_object *period, *duplicates, *adapter, *discovery;
+    json_object *period, *duplicates, *adapter, *discovery, *database;
     const char *adapter_name = "hci0";
     const char *error = NULL;
 
@@ -41,8 +41,9 @@ bool app_config_parse(json_object *root, AppConfig *config)
     json_object_object_foreach(root, key, value) {
         (void)value;
         REQUIRE(!strcmp(key, "polling_period_seconds") ||
-                !strcmp(key, "DuplicateData") || !strcmp(key, "adapter") || !strcmp(key, "discover_sensors"),
-                "unknown config key (use polling_period_seconds, DuplicateData, adapter, discover_sensors)");
+                !strcmp(key, "DuplicateData") || !strcmp(key, "adapter") ||
+                !strcmp(key, "discover_sensors") || !strcmp(key, "database"),
+                "unknown config key (use polling_period_seconds, DuplicateData, adapter, discover_sensors, database)");
     }
     if (json_object_object_get_ex(root, "discover_sensors", &discovery)) {
         REQUIRE(json_object_is_type(discovery, json_type_boolean) && json_object_get_boolean(discovery),
@@ -68,6 +69,46 @@ bool app_config_parse(json_object *root, AppConfig *config)
     for (const char *p = adapter_name + 3; *p; p++)
         REQUIRE(isdigit((unsigned char)*p), "adapter must start with hci followed by digits");
     snprintf(config->adapter_path, sizeof(config->adapter_path), "/org/bluez/%s", adapter_name);
+    if (json_object_object_get_ex(root, "database", &database)) {
+        json_object *path, *days, *mode, *size;
+        REQUIRE(json_object_is_type(database, json_type_object), "database must be an object");
+        json_object_object_foreach(database, key, value) {
+            (void)value;
+            REQUIRE(!strcmp(key, "path") || !strcmp(key, "retention_days") ||
+                    !strcmp(key, "logging_mode") || !strcmp(key, "max_size_mb"),
+                    "unknown database key (use path, retention_days, logging_mode, max_size_mb)");
+        }
+        REQUIRE(json_object_object_get_ex(database, "path", &path) &&
+                json_object_is_type(path, json_type_string), "database.path must be a nonempty string");
+        const char *path_text = json_object_get_string(path);
+        size_t length = (size_t)json_object_get_string_len(path);
+        REQUIRE(length > 0 && length < sizeof(config->database.path) && strlen(path_text) == length,
+                "database.path must contain 1 to 4095 bytes without NUL bytes");
+        REQUIRE(strcmp(path_text, ":memory:") && strncmp(path_text, "file:", 5),
+                "database.path must be a file path, not a SQLite URI or :memory:");
+        memcpy(config->database.path, path_text, length + 1);
+        if (json_object_object_get_ex(database, "retention_days", &days)) {
+            REQUIRE(json_object_is_type(days, json_type_int) &&
+                    json_object_get_int64(days) >= 1 && json_object_get_int64(days) <= INT_MAX,
+                    "database.retention_days must be an integer from 1 to 2147483647, or omitted");
+            config->database.retention_days = (unsigned)json_object_get_int64(days);
+        }
+        if (json_object_object_get_ex(database, "max_size_mb", &size)) {
+            REQUIRE(json_object_is_type(size, json_type_int) &&
+                    json_object_get_int64(size) >= 1 && json_object_get_int64(size) <= INT_MAX,
+                    "database.max_size_mb must be an integer from 1 to 2147483647, or omitted");
+            config->database.max_size_mb = (unsigned)json_object_get_int64(size);
+        }
+        if (json_object_object_get_ex(database, "logging_mode", &mode)) {
+            REQUIRE(json_object_is_type(mode, json_type_string), "database.logging_mode must be a string");
+            const char *mode_text = json_object_get_string(mode);
+            REQUIRE(strlen(mode_text) == (size_t)json_object_get_string_len(mode) &&
+                    (!strcmp(mode_text, "per_report") || !strcmp(mode_text, "every_packet")),
+                    "database.logging_mode must be per_report or every_packet");
+            config->database.logging_mode = !strcmp(mode_text, "every_packet") ?
+                                           DATABASE_EVERY_PACKET : DATABASE_PER_REPORT;
+        }
+    }
     return true;
 fail:
     fprintf(stderr, "Config error: %s\n", error);

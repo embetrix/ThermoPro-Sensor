@@ -42,7 +42,7 @@ json_object *sensor_to_json(const Sensor *sensor)
     return output;
 }
 
-bool json_output_report(Sensor *sensors, size_t count)
+bool json_output_report(const Sensor *sensors, size_t count)
 {
     for (size_t i = 0; i < count; i++) {
         json_object *output = sensor_to_json(&sensors[i]);
@@ -50,7 +50,6 @@ bool json_output_report(Sensor *sensors, size_t count)
         json_object_put(output);
         if (r == EOF)
             return false;
-        sensors[i].fresh = false;
     }
     return fflush(stdout) == 0;
 }
