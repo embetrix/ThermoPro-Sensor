@@ -2,7 +2,7 @@
 
 `thermopro-sensor` is a Linux C program that finds ThermoPro sensors through BlueZ.
 It listens for Bluetooth LE broadcasts, prints one JSON line per sensor, and
-can save readings to SQLite.
+can save readings to SQLite and send them to ThingsBoard over MQTT.
 The default report period is 10 seconds. You do not need to enter sensor
 addresses, pair devices, or install Python to run it.
 
@@ -11,12 +11,13 @@ addresses, pair devices, or install Python to run it.
 On Ubuntu/Debian, install the build dependencies and Bluetooth service:
 
 ```sh
-sudo apt install build-essential cmake pkg-config libsystemd-dev libjson-c-dev libsqlite3-dev bluez
+sudo apt install build-essential cmake pkg-config libsystemd-dev libjson-c-dev libsqlite3-dev libmosquitto-dev ca-certificates bluez
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ./build/thermopro-sensor config/sensors.json
 ```
 
+The build needs libmosquitto 2.0.12 or later.
 BlueZ must be running and the selected Bluetooth adapter must be on.
 Press Ctrl+C or send SIGTERM to stop the program. It closes its scan session
 on exit. Status and error messages go to stderr. JSON readings go to stdout.
@@ -34,6 +35,7 @@ Source files are in `src/`:
 | `sensor_registry.c` / `sensor_registry.h` | Track sensors and manage their memory |
 | `json_output.c` / `json_output.h` | Print readings as JSON |
 | `sqlite_store.c` / `sqlite_store.h` | Save readings and delete expired history |
+| `mqtt_output.c` / `mqtt_output.h` | Send readings through the ThingsBoard gateway API |
 | `sensor.h` | Define the shared sensor data structure |
 
 CMake builds config, decoder, registry, output, and database code into `thermopro_core`.
@@ -57,6 +59,14 @@ BlueZ scanner. Config settings and sensor data are stored separately.
     "retention_days": 30,
     "max_size_mb": 10,
     "logging_mode": "per_report"
+  },
+  "mqtt": {
+    "enabled": false,
+    "host": "mqtt.thingsboard.cloud",
+    "port": 8883,
+    "tls": true,
+    "access_token": "",
+    "max_pending_sensors": 256
   }
 }
 ```
@@ -74,12 +84,14 @@ BlueZ scanner. Config settings and sensor data are stored separately.
 - `adapter`: optional adapter name, defaults to `hci0`.
 - `database`: optional SQLite settings. Leave it out to turn off database
   logging. JSON output stays on.
+- `mqtt`: optional ThingsBoard settings. Leave it out or set `enabled` to
+  `false` to turn off MQTT.
 
 This is JSON: use lowercase `true`/`false` and no trailing commas.
 Restart after changing the config. If you omit the path, the program reads
 `config/sensors.json` from the current directory.
 
-Check the config without using Bluetooth or opening the database:
+Check the config without opening Bluetooth, SQLite, or MQTT connections:
 
 ```sh
 ./build/thermopro-sensor --check-config config/sensors.json
@@ -168,6 +180,59 @@ SELECT sensor_address, received_at,
 FROM readings ORDER BY received_at DESC LIMIT 20;'
 ```
 
+## ThingsBoard MQTT
+
+The host, port, TLS settings, and token come from the `mqtt` JSON object.
+Changing them needs a restart, not a rebuild. The sample config leaves MQTT off.
+
+Copy the sample to `config/sensors.local.json`, set `enabled` to `true`, and
+fill in the gateway's access token. This local file is ignored by Git.
+Keep it readable only by your user with `chmod 600 config/sensors.local.json`.
+
+| Setting | Meaning | Default |
+| --- | --- | --- |
+| `enabled` | Turn MQTT on or off | Off without an `mqtt` object, otherwise on |
+| `host` | MQTT hostname or IP address, without a URL scheme | Required when enabled |
+| `port` | Broker port from 1 to 65535 | 8883 with TLS, otherwise 1883 |
+| `tls` | Use TLS and check the server certificate and hostname | `true` |
+| `access_token` | Gateway access token, sent as the MQTT username | Required when enabled |
+| `ca_file` | Optional path to a trusted CA certificate file | Use OS certificates |
+| `max_pending_sensors` | Maximum sensors waiting to send, from 1 to 10000 | 256 |
+
+For `thingsboard.cloud`, use `mqtt.thingsboard.cloud` with TLS on port 8883.
+For the EU service, use `mqtt.eu.thingsboard.cloud`. These are config values,
+not fixed values in the C code. See ThingsBoard's
+[Cloud MQTT settings](https://thingsboard.io/docs/paas/reference/mqtt-api/getting-connected/).
+
+Run with your local settings:
+
+```sh
+./build/thermopro-sensor --check-config config/sensors.local.json
+./build/thermopro-sensor config/sensors.local.json
+```
+
+The ThingsBoard device must have **Is gateway** enabled. Each sensor uses its
+full MAC address as its device name. The reader sends `v1/gateway/connect`,
+waits for its acknowledgement, then sends `v1/gateway/telemetry`. Both use
+QoS 1, so retries can deliver a reading more than once. See the
+[ThingsBoard gateway API](https://thingsboard.io/docs/reference/gateway-api/overview/).
+
+MQTT sends the latest fresh reading at each `polling_period_seconds` interval,
+regardless of the SQLite logging mode. It sends `temperature_c`, `humidity_pct`,
+`battery_low`, and RSSI when available. Each reading keeps its receive time as
+UTC Unix milliseconds. Missing readings create no MQTT message.
+
+Network work runs in a separate thread. During an outage, SQLite and JSON
+output continue. MQTT keeps the latest waiting reading per sensor, plus the
+message being sent. New readings replace older waiting values. If all slots
+are full, readings from other sensors are skipped with a message on stderr.
+Network retries wait from 1 to 30 seconds. Fix certificate or login errors and
+restart if the MQTT thread stops.
+
+Waiting MQTT readings are lost on exit. The reader does not upload old rows
+from SQLite. It does not mark a sensor offline after a missed report or
+support the IoT Gateway's remote configuration and connector settings.
+
 ## Automatic ThermoPro discovery
 
 New sensors appear while the program runs. Each new sensor is also logged to
@@ -211,16 +276,20 @@ or temperature scale needs decoder changes too. Tests use your chosen values.
 
 ## Run with systemd
 
-Build the program first. Then run these commands from the project root:
+Build the program first. The unit needs systemd 247 or later.
+Run these commands from the project root:
 
 ```sh
 sudo install -m 0755 build/thermopro-sensor /usr/local/bin/thermopro-sensor
 sudo install -d -m 0755 /etc/thermopro-sensor
-sudo install -m 0644 config/sensors.json /etc/thermopro-sensor/sensors.json
+sudo install -m 0600 config/sensors.json /etc/thermopro-sensor/sensors.json
 sudo install -m 0644 deploy/thermopro-sensor.service /etc/systemd/system/thermopro-sensor.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now thermopro-sensor.service
 ```
+
+For MQTT, use `config/sensors.local.json` in the config copy command above.
+The unit uses `LoadCredential` so its service user can read the private config.
 
 The config copy command replaces an existing config. Skip that command when
 upgrading if you want to keep your installed settings.
@@ -249,14 +318,15 @@ Edit `/etc/thermopro-sensor/sensors.json` to change service settings, then check
 the config and restart:
 
 ```sh
-/usr/local/bin/thermopro-sensor --check-config /etc/thermopro-sensor/sensors.json
+sudo /usr/local/bin/thermopro-sensor --check-config /etc/thermopro-sensor/sensors.json
 sudo systemctl restart thermopro-sensor.service
 ```
 
 ## Tests
 
 Tests cover config checks, packet decoding, JSON output, and saved readings.
-They also check failed writes, age and size limits, and database shrinking:
+They also check MQTT config and payloads, failed writes, age and size limits,
+and database shrinking:
 
 ```sh
 ctest --test-dir build --output-on-failure
@@ -268,12 +338,15 @@ It needs Python and `dbus-fast`, but no Bluetooth hardware:
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install dbus-fast
-cmake -S . -B build -DENABLE_BLUEZ_INTEGRATION_TESTS=ON -DPython3_EXECUTABLE="$PWD/.venv/bin/python"
+cmake -S . -B build -DENABLE_BLUEZ_INTEGRATION_TESTS=ON \
+  -DENABLE_MQTT_INTEGRATION_TESTS=ON -DPython3_EXECUTABLE="$PWD/.venv/bin/python"
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
 This test also needs `dbus-daemon` from the `dbus` package on Ubuntu/Debian.
 It checks both `DuplicateData` settings, discovery, report timing, missing
-readings, both database logging modes, and shutdown. Test live readings with
-your Bluetooth adapter and sensors.
+readings, both database logging modes, MQTT output, and shutdown. The MQTT
+test uses Python and `openssl` to check acknowledgements, reconnects, queue
+limits, and TLS on local sockets. Tests do not contact ThingsBoard. Test live
+readings with your Bluetooth adapter and sensors.

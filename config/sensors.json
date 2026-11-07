@@ -8,5 +8,13 @@
     "retention_days": 30,
     "max_size_mb": 10,
     "logging_mode": "per_report"
+  },
+  "mqtt": {
+    "enabled": false,
+    "host": "mqtt.thingsboard.cloud",
+    "port": 8883,
+    "tls": true,
+    "access_token": "",
+    "max_pending_sensors": 256
   }
 }
