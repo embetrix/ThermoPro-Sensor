@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(thermopro_sensor VERSION 1.0 LANGUAGES C)
+include(GNUInstallDirs)
+
+set(SYSTEMD_UNIT_DIR "lib/systemd/system" CACHE PATH "Systemd service install directory")
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -55,6 +58,12 @@ enable_sensor_warnings(thermopro_core)
 add_executable(thermopro-sensor src/main.c src/bluez_scanner.c)
 target_link_libraries(thermopro-sensor PRIVATE thermopro_core PkgConfig::SYSTEMD)
 enable_sensor_warnings(thermopro-sensor)
+
+install(TARGETS thermopro-sensor RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})
+configure_file(cmake/install_runtime.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/install_runtime.cmake @ONLY)
+install(SCRIPT ${CMAKE_CURRENT_BINARY_DIR}/install_runtime.cmake)
 
 include(CTest)
 if(BUILD_TESTING)

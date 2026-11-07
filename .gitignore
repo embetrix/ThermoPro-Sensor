@@ -10,6 +10,9 @@ __pycache__/
 /Makefile
 /Testing/
 /cmake_install.cmake
+/install_runtime.cmake
+/install_manifest*.txt
+/thermopro-sensor.service
 /compile_commands.json
 
 # Built programs and libraries

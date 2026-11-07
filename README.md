@@ -78,17 +78,23 @@ and restart if the MQTT network thread stops.
 
 ## Run as a service
 
-Requires systemd 247 or later. For MQTT, use your local config as the source in
-the config install command below. That command replaces any installed config.
+Requires systemd 247 or later. Install the binary, sample config, service, and
+license with CMake:
 
 ```sh
-sudo install -m 0755 build/thermopro-sensor /usr/local/bin/thermopro-sensor
-sudo install -d -m 0755 /etc/thermopro-sensor
-sudo install -m 0600 config/thermopro-sensor.json /etc/thermopro-sensor/thermopro-sensor.json
-sudo install -m 0644 deploy/thermopro-sensor.service /etc/systemd/system/thermopro-sensor.service
+cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_INSTALL_SYSCONFDIR=/etc
+cmake --build build
+sudo cmake --install build
 sudo systemctl daemon-reload
 sudo systemctl enable --now thermopro-sensor.service
 ```
+
+Existing config is preserved. New config is installed with permissions `0600`.
+For MQTT, edit the installed config before starting the service. Local config
+files are never installed automatically.
+`CMAKE_INSTALL_BINDIR` and `SYSTEMD_UNIT_DIR` override the binary and service
+directories. The default service directory is `lib/systemd/system` under the
+install prefix. Packaging can use `DESTDIR=/path/to/staging cmake --install build`.
 
 The service runs from `/var/lib/thermopro-sensor`, where the sample stores
 `readings.db`. Edit `/etc/thermopro-sensor/thermopro-sensor.json` for service settings.

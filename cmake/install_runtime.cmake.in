@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright 2026 Embetrix Embedded Systems Solutions, ayoub.zaki@embetrix.com
+
+# Resolve paths at install time so --prefix and DESTDIR work together
+set(CMAKE_INSTALL_BINDIR "@CMAKE_INSTALL_BINDIR@")
+set(CMAKE_INSTALL_SYSCONFDIR "@CMAKE_INSTALL_SYSCONFDIR@")
+set(CMAKE_INSTALL_LIBDIR "@CMAKE_INSTALL_LIBDIR@")
+set(CMAKE_SIZEOF_VOID_P "@CMAKE_SIZEOF_VOID_P@")
+set(CMAKE_SYSTEM_NAME "@CMAKE_SYSTEM_NAME@")
+include(GNUInstallDirs)
+GNUInstallDirs_get_absolute_install_dir(runtime_bin_dir CMAKE_INSTALL_BINDIR BINDIR)
+GNUInstallDirs_get_absolute_install_dir(runtime_config_dir CMAKE_INSTALL_SYSCONFDIR SYSCONFDIR)
+string(APPEND runtime_config_dir "/thermopro-sensor")
+
+set(runtime_config "$ENV{DESTDIR}${runtime_config_dir}/thermopro-sensor.json")
+if(EXISTS "${runtime_config}" OR IS_SYMLINK "${runtime_config}")
+    message(STATUS "Keeping existing config: ${runtime_config}")
+else()
+    file(INSTALL DESTINATION "${runtime_config_dir}"
+        TYPE FILE PERMISSIONS OWNER_READ OWNER_WRITE
+        FILES "@CMAKE_CURRENT_SOURCE_DIR@/config/thermopro-sensor.json")
+endif()
+
+set(runtime_unit_dir "@SYSTEMD_UNIT_DIR@")
+if(NOT IS_ABSOLUTE "${runtime_unit_dir}")
+    set(runtime_unit_dir "${CMAKE_INSTALL_PREFIX}/${runtime_unit_dir}")
+endif()
+configure_file("@CMAKE_CURRENT_SOURCE_DIR@/deploy/thermopro-sensor.service.in"
+    "@CMAKE_CURRENT_BINARY_DIR@/thermopro-sensor.service" @ONLY)
+file(INSTALL DESTINATION "${runtime_unit_dir}" TYPE FILE
+    FILES "@CMAKE_CURRENT_BINARY_DIR@/thermopro-sensor.service")
