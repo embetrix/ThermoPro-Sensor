@@ -14,7 +14,7 @@ On Ubuntu/Debian, install the build dependencies and Bluetooth service:
 sudo apt install build-essential cmake pkg-config libsystemd-dev libjson-c-dev libsqlite3-dev libmosquitto-dev ca-certificates bluez
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-./build/thermopro-sensor config/sensors.json
+./build/thermopro-sensor config/thermopro-sensor.json
 ```
 
 The build needs libmosquitto 2.0.12 or later.
@@ -35,7 +35,7 @@ Source files are in `src/`:
 | `sensor_registry.c` / `sensor_registry.h` | Track sensors and manage their memory |
 | `json_output.c` / `json_output.h` | Print readings as JSON |
 | `sqlite_store.c` / `sqlite_store.h` | Save readings and delete expired history |
-| `mqtt_output.c` / `mqtt_output.h` | Send readings through the ThingsBoard gateway API |
+| `thingsboard_mqtt.c` / `thingsboard_mqtt.h` | Send readings through the ThingsBoard gateway API |
 | `sensor.h` | Define the shared sensor data structure |
 
 CMake builds config, decoder, registry, output, and database code into `thermopro_core`.
@@ -46,7 +46,7 @@ BlueZ scanner. Config settings and sensor data are stored separately.
 
 ## Configuration
 
-`config/sensors.json` uses automatic discovery only:
+`config/thermopro-sensor.json` uses automatic discovery only:
 
 ```json
 {
@@ -89,12 +89,12 @@ BlueZ scanner. Config settings and sensor data are stored separately.
 
 This is JSON: use lowercase `true`/`false` and no trailing commas.
 Restart after changing the config. If you omit the path, the program reads
-`config/sensors.json` from the current directory.
+`config/thermopro-sensor.json` from the current directory.
 
 Check the config without opening Bluetooth, SQLite, or MQTT connections:
 
 ```sh
-./build/thermopro-sensor --check-config config/sensors.json
+./build/thermopro-sensor --check-config config/thermopro-sensor.json
 ```
 
 Example output:
@@ -185,9 +185,9 @@ FROM readings ORDER BY received_at DESC LIMIT 20;'
 The host, port, TLS settings, and token come from the `mqtt` JSON object.
 Changing them needs a restart, not a rebuild. The sample config leaves MQTT off.
 
-Copy the sample to `config/sensors.local.json`, set `enabled` to `true`, and
+Copy the sample to `config/thermopro-sensor.local.json`, set `enabled` to `true`, and
 fill in the gateway's access token. This local file is ignored by Git.
-Keep it readable only by your user with `chmod 600 config/sensors.local.json`.
+Keep it readable only by your user with `chmod 600 config/thermopro-sensor.local.json`.
 
 | Setting | Meaning | Default |
 | --- | --- | --- |
@@ -207,8 +207,8 @@ not fixed values in the C code. See ThingsBoard's
 Run with your local settings:
 
 ```sh
-./build/thermopro-sensor --check-config config/sensors.local.json
-./build/thermopro-sensor config/sensors.local.json
+./build/thermopro-sensor --check-config config/thermopro-sensor.local.json
+./build/thermopro-sensor config/thermopro-sensor.local.json
 ```
 
 The ThingsBoard device must have **Is gateway** enabled. Each sensor uses its
@@ -282,17 +282,19 @@ Run these commands from the project root:
 ```sh
 sudo install -m 0755 build/thermopro-sensor /usr/local/bin/thermopro-sensor
 sudo install -d -m 0755 /etc/thermopro-sensor
-sudo install -m 0600 config/sensors.json /etc/thermopro-sensor/sensors.json
+sudo install -m 0600 config/thermopro-sensor.json /etc/thermopro-sensor/thermopro-sensor.json
 sudo install -m 0644 deploy/thermopro-sensor.service /etc/systemd/system/thermopro-sensor.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now thermopro-sensor.service
 ```
 
-For MQTT, use `config/sensors.local.json` in the config copy command above.
+For MQTT, use `config/thermopro-sensor.local.json` in the config copy command above.
 The unit uses `LoadCredential` so its service user can read the private config.
 
 The config copy command replaces an existing config. Skip that command when
 upgrading if you want to keep your installed settings.
+If your installed config is still named `sensors.json`, rename it to
+`thermopro-sensor.json` in `/etc/thermopro-sensor` before using the updated unit.
 
 The unit creates `/var/lib/thermopro-sensor` with
 `StateDirectory=thermopro-sensor` and runs from there. The example database
@@ -314,11 +316,11 @@ sudo systemctl status thermopro-sensor.service
 sudo journalctl -u thermopro-sensor.service -f -o cat
 ```
 
-Edit `/etc/thermopro-sensor/sensors.json` to change service settings, then check
+Edit `/etc/thermopro-sensor/thermopro-sensor.json` to change service settings, then check
 the config and restart:
 
 ```sh
-sudo /usr/local/bin/thermopro-sensor --check-config /etc/thermopro-sensor/sensors.json
+sudo /usr/local/bin/thermopro-sensor --check-config /etc/thermopro-sensor/thermopro-sensor.json
 sudo systemctl restart thermopro-sensor.service
 ```
 

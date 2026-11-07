@@ -57,7 +57,7 @@ async def exercise(binary, bus, address, directory, duplicates, protocol, loggin
             return None
         return Message.new_method_return(message)
 
-    config = Path(directory) / "sensors.json"
+    config = Path(directory) / "thermopro-sensor.json"
     settings = {
         "polling_period_seconds": 1,
         "DuplicateData": duplicates,

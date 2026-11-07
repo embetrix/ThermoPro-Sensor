@@ -19,20 +19,20 @@
  * MA 02111-1307 USA
  */
 
-#ifndef THERMOPRO_MQTT_OUTPUT_H
-#define THERMOPRO_MQTT_OUTPUT_H
+#ifndef THERMOPRO_THINGSBOARD_MQTT_H
+#define THERMOPRO_THINGSBOARD_MQTT_H
 
 #include "app_config.h"
 #include "sensor.h"
 #include <stddef.h>
 
-typedef struct MqttOutput MqttOutput;
+typedef struct ThingsBoardMqtt ThingsBoardMqtt;
 
 /* The caller frees the payload with json_object_put() */
-json_object *mqtt_reading_payload(const Sensor *sensor);
-bool mqtt_output_open(MqttOutput **output, const MqttConfig *config);
+json_object *thingsboard_mqtt_reading_payload(const Sensor *sensor);
+bool thingsboard_mqtt_open(ThingsBoardMqtt **output, const MqttConfig *config);
 /* Keep the latest fresh reading per sensor while waiting to send */
-void mqtt_output_report(MqttOutput *output, const Sensor *sensors, size_t count);
-void mqtt_output_close(MqttOutput *output);
+void thingsboard_mqtt_report(ThingsBoardMqtt *output, const Sensor *sensors, size_t count);
+void thingsboard_mqtt_close(ThingsBoardMqtt *output);
 
 #endif

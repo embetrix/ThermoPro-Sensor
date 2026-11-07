@@ -26,4 +26,5 @@ __pycache__/
 
 # Local MQTT settings
 /config/sensors.local.json
+/config/thermopro-sensor.local.json
 /test_mqtt

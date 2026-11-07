@@ -41,10 +41,10 @@ int main(int argc, char **argv)
     bool check_only = argc > 1 && !strcmp(argv[1], "--check-config");
     if ((argc > 1 && !strcmp(argv[1], "--help")) || argc > (check_only ? 3 : 2)) {
         fprintf(argc > 2 && !check_only ? stderr : stdout,
-                "Usage: %s [--check-config] [config/sensors.json]\n", argv[0]);
+                "Usage: %s [--check-config] [config/thermopro-sensor.json]\n", argv[0]);
         return argc > (check_only ? 3 : 2) ? EXIT_FAILURE : EXIT_SUCCESS;
     }
-    const char *path = argc > (check_only ? 2 : 1) ? argv[check_only ? 2 : 1] : "config/sensors.json";
+    const char *path = argc > (check_only ? 2 : 1) ? argv[check_only ? 2 : 1] : "config/thermopro-sensor.json";
     AppConfig config;
     if (!app_config_load(path, &config))
         return EXIT_FAILURE;

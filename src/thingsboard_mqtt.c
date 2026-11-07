@@ -19,7 +19,7 @@
  * MA 02111-1307 USA
  */
 
-#include "mqtt_output.h"
+#include "thingsboard_mqtt.h"
 
 #include <mosquitto.h>
 #include <pthread.h>
@@ -37,7 +37,7 @@ typedef struct {
     bool pending;
 } PendingSensor;
 
-struct MqttOutput {
+struct ThingsBoardMqtt {
     struct mosquitto *client;
     pthread_mutex_t mutex;
     PendingSensor *sensors;
@@ -54,7 +54,7 @@ struct MqttOutput {
     int port;
 };
 
-json_object *mqtt_reading_payload(const Sensor *sensor)
+json_object *thingsboard_mqtt_reading_payload(const Sensor *sensor)
 {
     json_object *root = json_object_new_object();
     json_object *entries = json_object_new_array();
@@ -75,7 +75,7 @@ json_object *mqtt_reading_payload(const Sensor *sensor)
 }
 
 /* The caller holds the mutex */
-static bool publish_json(MqttOutput *output, const char *topic, json_object *payload)
+static bool publish_json(ThingsBoardMqtt *output, const char *topic, json_object *payload)
 {
     const char *text = json_object_to_json_string_ext(payload, JSON_C_TO_STRING_PLAIN);
     int result = mosquitto_publish(output->client, &output->message_id, topic,
@@ -89,7 +89,7 @@ static bool publish_json(MqttOutput *output, const char *topic, json_object *pay
     return true;
 }
 
-static void send_next(MqttOutput *output)
+static void send_next(ThingsBoardMqtt *output)
 {
     if (!output->connected || output->stopping || output->message_id)
         return;
@@ -111,7 +111,7 @@ static void send_next(MqttOutput *output)
 static void on_connect(struct mosquitto *client, void *userdata, int result)
 {
     (void)client;
-    MqttOutput *output = userdata;
+    ThingsBoardMqtt *output = userdata;
     pthread_mutex_lock(&output->mutex);
     output->connected = result == 0;
     if (output->stopping) {
@@ -130,7 +130,7 @@ static void on_connect(struct mosquitto *client, void *userdata, int result)
 static void on_disconnect(struct mosquitto *client, void *userdata, int result)
 {
     (void)client;
-    MqttOutput *output = userdata;
+    ThingsBoardMqtt *output = userdata;
     pthread_mutex_lock(&output->mutex);
     output->connected = false;
     if (!output->stopping)
@@ -141,14 +141,14 @@ static void on_disconnect(struct mosquitto *client, void *userdata, int result)
 static void on_publish(struct mosquitto *client, void *userdata, int message_id)
 {
     (void)client;
-    MqttOutput *output = userdata;
+    ThingsBoardMqtt *output = userdata;
     pthread_mutex_lock(&output->mutex);
     if (!output->stopping && output->message_id == message_id) {
         PendingSensor *slot = &output->sensors[output->current];
         output->message_id = 0;
         if (!output->sending_reading) {
             output->sending_reading = true;
-            if (publish_json(output, THINGSBOARD_TELEMETRY_TOPIC, mqtt_reading_payload(&slot->reading)))
+            if (publish_json(output, THINGSBOARD_TELEMETRY_TOPIC, thingsboard_mqtt_reading_payload(&slot->reading)))
                 slot->pending = false;
         } else {
             if (!slot->pending)
@@ -162,7 +162,7 @@ static void on_publish(struct mosquitto *client, void *userdata, int message_id)
 
 static void *network_loop(void *userdata)
 {
-    MqttOutput *output = userdata;
+    ThingsBoardMqtt *output = userdata;
     int error = mosquitto_connect(output->client, output->host, output->port, 60);
     if (error != MOSQ_ERR_SUCCESS)
         fprintf(stderr, "MQTT connection pending: %s\n", mosquitto_strerror(error));
@@ -172,14 +172,14 @@ static void *network_loop(void *userdata)
     return NULL;
 }
 
-bool mqtt_output_open(MqttOutput **result, const MqttConfig *config)
+bool thingsboard_mqtt_open(ThingsBoardMqtt **result, const MqttConfig *config)
 {
     *result = NULL;
     if (!config->enabled)
         return true;
     if (mosquitto_lib_init() != MOSQ_ERR_SUCCESS)
         return false;
-    MqttOutput *output = calloc(1, sizeof(*output));
+    ThingsBoardMqtt *output = calloc(1, sizeof(*output));
     if (!output) {
         mosquitto_lib_cleanup();
         return false;
@@ -222,11 +222,11 @@ bool mqtt_output_open(MqttOutput **result, const MqttConfig *config)
     return true;
 fail:
     fprintf(stderr, "Cannot start MQTT output\n");
-    mqtt_output_close(output);
+    thingsboard_mqtt_close(output);
     return false;
 }
 
-void mqtt_output_report(MqttOutput *output, const Sensor *sensors, size_t count)
+void thingsboard_mqtt_report(ThingsBoardMqtt *output, const Sensor *sensors, size_t count)
 {
     if (!output)
         return;
@@ -261,7 +261,7 @@ void mqtt_output_report(MqttOutput *output, const Sensor *sensors, size_t count)
     pthread_mutex_unlock(&output->mutex);
 }
 
-void mqtt_output_close(MqttOutput *output)
+void thingsboard_mqtt_close(ThingsBoardMqtt *output)
 {
     if (!output)
         return;

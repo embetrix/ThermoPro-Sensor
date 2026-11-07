@@ -43,7 +43,7 @@ add_library(thermopro_core STATIC
     src/sensor_registry.c
     src/json_output.c
     src/sqlite_store.c
-    src/mqtt_output.c)
+    src/thingsboard_mqtt.c)
 target_include_directories(thermopro_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(thermopro_core PUBLIC PkgConfig::JSON_C SQLite::SQLite3 PkgConfig::MOSQUITTO Threads::Threads)
 target_compile_definitions(thermopro_core PUBLIC
@@ -83,7 +83,7 @@ if(BUILD_TESTING)
     target_link_libraries(test_sqlite PRIVATE thermopro_core)
     enable_sensor_warnings(test_sqlite)
     add_test(NAME sensor_sqlite COMMAND test_sqlite)
-    add_test(NAME sensor_config COMMAND thermopro-sensor --check-config ${CMAKE_CURRENT_SOURCE_DIR}/config/sensors.json)
+    add_test(NAME sensor_config COMMAND thermopro-sensor --check-config ${CMAKE_CURRENT_SOURCE_DIR}/config/thermopro-sensor.json)
 
     option(ENABLE_BLUEZ_INTEGRATION_TESTS "Test with fake BlueZ (needs Python, dbus-fast, and dbus-daemon)" OFF)
     if(ENABLE_BLUEZ_INTEGRATION_TESTS)

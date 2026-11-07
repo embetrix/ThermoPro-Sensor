@@ -22,7 +22,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "bluez_scanner.h"
 #include "json_output.h"
-#include "mqtt_output.h"
+#include "thingsboard_mqtt.h"
 #include "sensor_registry.h"
 #include "sqlite_store.h"
 #include "thermopro_decoder.h"
@@ -46,7 +46,7 @@ typedef struct {
     const AppConfig *config;
     SensorRegistry registry;
     SqliteStore store;
-    MqttOutput *mqtt;
+    ThingsBoardMqtt *mqtt;
     Sensor *packets;
     size_t packet_count;
     int callback_error;
@@ -227,7 +227,7 @@ int bluez_scanner_run(const AppConfig *config, const volatile sig_atomic_t *stop
     if (!sqlite_store_open(&context.store, &config->database))
         return EXIT_FAILURE;
     int r = -EIO;
-    if (!mqtt_output_open(&context.mqtt, &config->mqtt))
+    if (!thingsboard_mqtt_open(&context.mqtt, &config->mqtt))
         goto done;
     r = sd_bus_open_system(&bus);
     if (r < 0)
@@ -285,7 +285,7 @@ int bluez_scanner_run(const AppConfig *config, const volatile sig_atomic_t *stop
                 r = -EIO;
                 goto done;
             }
-            mqtt_output_report(context.mqtt, context.registry.sensors, context.registry.count);
+            thingsboard_mqtt_report(context.mqtt, context.registry.sensors, context.registry.count);
             if (!json_output_report(context.registry.sensors, context.registry.count)) {
                 r = -EIO;
                 goto done;
@@ -316,6 +316,6 @@ done:
     sd_bus_flush_close_unref(bus);
     sensor_registry_clear(&context.registry);
     sqlite_store_close(&context.store);
-    mqtt_output_close(context.mqtt);
+    thingsboard_mqtt_close(context.mqtt);
     return r < 0 ? EXIT_FAILURE : EXIT_SUCCESS;
 }

@@ -19,7 +19,7 @@
  * MA 02111-1307 USA
  */
 
-#include "mqtt_output.h"
+#include "thingsboard_mqtt.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -71,7 +71,7 @@ static void test_payload(void)
 {
     Sensor sensor = {.address = "EC:20:1E:58:25:10", .temperature_tenths = 133,
                      .humidity = 48, .battery_low = true, .received_at_ms = INT64_C(1794046826202)};
-    json_object *payload = mqtt_reading_payload(&sensor);
+    json_object *payload = thingsboard_mqtt_reading_payload(&sensor);
     json_object *entries = json_object_object_get(payload, sensor.address);
     assert(json_object_array_length(entries) == 1);
     json_object *entry = json_object_array_get_idx(entries, 0);
@@ -85,7 +85,7 @@ static void test_payload(void)
     sensor.temperature_tenths = -55;
     sensor.has_rssi = true;
     sensor.rssi = -67;
-    payload = mqtt_reading_payload(&sensor);
+    payload = thingsboard_mqtt_reading_payload(&sensor);
     entry = json_object_array_get_idx(json_object_object_get(payload, sensor.address), 0);
     values = json_object_object_get(entry, "values");
     assert(json_object_get_double(json_object_object_get(values, "temperature_c")) == -5.5);
@@ -97,8 +97,8 @@ static void test_payload(void)
 static int run_client(const char *path)
 {
     AppConfig config;
-    MqttOutput *output;
-    if (!app_config_load(path, &config) || !mqtt_output_open(&output, &config.mqtt))
+    ThingsBoardMqtt *output;
+    if (!app_config_load(path, &config) || !thingsboard_mqtt_open(&output, &config.mqtt))
         return 1;
     puts("ready");
     fflush(stdout);
@@ -109,11 +109,11 @@ static int run_client(const char *path)
         sensor.fresh = fresh != 0;
         sensor.has_rssi = rssi != 0;
         sensor.rssi = (int16_t)rssi;
-        mqtt_output_report(output, &sensor, 1);
+        thingsboard_mqtt_report(output, &sensor, 1);
         puts("queued");
         fflush(stdout);
     }
-    mqtt_output_close(output);
+    thingsboard_mqtt_close(output);
     return 0;
 }
 
@@ -123,11 +123,11 @@ int main(int argc, char **argv)
         return run_client(argv[1]);
     test_config();
     test_payload();
-    MqttOutput *output = NULL;
+    ThingsBoardMqtt *output = NULL;
     MqttConfig config = {0};
-    assert(mqtt_output_open(&output, &config) && !output);
-    mqtt_output_report(output, NULL, 0);
-    mqtt_output_close(output);
+    assert(thingsboard_mqtt_open(&output, &config) && !output);
+    thingsboard_mqtt_report(output, NULL, 0);
+    thingsboard_mqtt_close(output);
     puts("MQTT config and payload tests passed");
     return 0;
 }
