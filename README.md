@@ -2,8 +2,13 @@
 
 Linux C program that discovers compatible ThermoPro Bluetooth LE sensors,
 prints JSON readings, and optionally logs to SQLite and ThingsBoard MQTT.
-No sensor addresses or pairing needed. Discovery matches the packet format,
-so not every ThermoPro model is supported.
+No sensor addresses or pairing needed.
+
+## Supported hardware
+
+| Model | Readings | Product page |
+| --- | --- | --- |
+| ThermoPro TP357S | Temperature, humidity, low battery status | [TP357 series](https://temppro.com/products/tp357-bluetooth-hygrometer-thermometer) |
 
 ## Build and run
 
