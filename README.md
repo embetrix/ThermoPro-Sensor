@@ -13,7 +13,7 @@ On Ubuntu/Debian, install the build dependencies and Bluetooth service:
 sudo apt install build-essential cmake pkg-config libsystemd-dev libjson-c-dev bluez
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-./build/sensor sensors.json
+./build/sensor config/sensors.json
 ```
 
 BlueZ must be running and the selected Bluetooth adapter must be on.
@@ -40,7 +40,7 @@ BlueZ scanner. Config settings and sensor data are stored separately.
 
 ## Configuration
 
-`sensors.json` uses automatic discovery only:
+`config/sensors.json` uses automatic discovery only:
 
 ```json
 {
@@ -65,12 +65,12 @@ BlueZ scanner. Config settings and sensor data are stored separately.
 
 This is JSON: use lowercase `true`/`false` and no trailing commas.
 Restart after changing the config. If you omit the path, the program reads
-`sensors.json` from the current directory.
+`config/sensors.json` from the current directory.
 
 Check the config without using Bluetooth:
 
 ```sh
-./build/sensor --check-config sensors.json
+./build/sensor --check-config config/sensors.json
 ```
 
 Example output:

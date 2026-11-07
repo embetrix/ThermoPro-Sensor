@@ -57,7 +57,7 @@ if(BUILD_TESTING)
     target_link_libraries(test_sensor PRIVATE thermopro_core)
     enable_sensor_warnings(test_sensor)
     add_test(NAME sensor_unit COMMAND test_sensor)
-    add_test(NAME sensor_config COMMAND sensor --check-config ${CMAKE_CURRENT_SOURCE_DIR}/sensors.json)
+    add_test(NAME sensor_config COMMAND sensor --check-config ${CMAKE_CURRENT_SOURCE_DIR}/config/sensors.json)
 
     option(ENABLE_BLUEZ_INTEGRATION_TESTS "Test with fake BlueZ (needs Python, dbus-fast, and dbus-daemon)" OFF)
     if(ENABLE_BLUEZ_INTEGRATION_TESTS)
