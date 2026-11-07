@@ -166,6 +166,11 @@ async def test_offline(binary, directory):
     process = await client(binary, directory, port, max_pending_sensors=1)
     broker = None
     try:
+        message = await asyncio.wait_for(process.stderr.readline(), 3)
+        assert message == f"MQTT connecting to 127.0.0.1:{port}\n".encode()
+        message = await asyncio.wait_for(process.stderr.readline(), 3)
+        assert b"connection failed, retrying" in message and b"Connection refused" in message
+        assert b"test-token" not in message
         await reading(process, temperature=133)
         await reading(process, temperature=250)
         await reading(process, address=SECOND)
@@ -183,6 +188,35 @@ async def test_offline(binary, directory):
         if broker:
             await broker.close()
     assert "MQTT queue full" in errors
+
+
+async def test_pending_connection(binary, directory):
+    broker = await Broker().start()
+    process = await client(binary, directory, broker.port)
+    try:
+        reader, writer = await asyncio.wait_for(broker.clients.get(), 3)
+        header, _ = await asyncio.wait_for(packet(reader), 3)
+        assert header == 0x10
+        message = await asyncio.wait_for(process.stderr.readline(), 3)
+        assert b"MQTT connecting to" in message
+        # A broker that never sends CONNACK must not leave the user without status
+        await asyncio.sleep(31)
+        await reading(process, fresh=0)
+        message = await asyncio.wait_for(process.stderr.readline(), 3)
+        assert b"MQTT offline" in message and b"0 sensors waiting" in message
+        assert b"waiting for connection or retry" in message and b"test-token" not in message
+        writer.write(b"\x20\x02\x00\x00")
+        await writer.drain()
+        message = await asyncio.wait_for(process.stderr.readline(), 3)
+        assert b"MQTT connected" in message
+        await reading(process)
+        mid, _ = await publish(reader, CONNECT)
+        await ack(writer, mid)
+        mid, _ = await publish(reader, TELEMETRY)
+        await ack(writer, mid)
+    finally:
+        await stop(process)
+        await broker.close()
 
 
 async def test_tls(binary, openssl, directory):
@@ -227,6 +261,7 @@ async def main():
     with tempfile.TemporaryDirectory(prefix="thermopro-mqtt-") as directory:
         await test_messages(binary, directory)
         await test_offline(binary, directory)
+        await test_pending_connection(binary, directory)
         await test_tls(binary, openssl, directory)
     print("MQTT messages, reconnects, offline queue, and TLS tests passed")
 

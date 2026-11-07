@@ -229,6 +229,16 @@ are full, readings from other sensors are skipped with a message on stderr.
 Network retries wait from 1 to 30 seconds. Fix certificate or login errors and
 restart if the MQTT thread stops.
 
+MQTT status goes to stderr, leaving stdout for JSON readings. Startup logs
+whether MQTT is disabled or connecting to the configured host and port.
+Connection failures include the error reason. While disconnected, each report
+checks whether 30 seconds have passed since the last status message and logs
+the number of sensors waiting. This also works with no sensor readings or while
+a connection attempt is stalled. A stopped network thread is reported separately.
+Successful connections and lost connections are logged too.
+For the systemd service, follow these messages with
+`journalctl -u thermopro-sensor -f`.
+
 Waiting MQTT readings are lost on exit. The reader does not upload old rows
 from SQLite. It does not mark a sensor offline after a missed report or
 support the IoT Gateway's remote configuration and connector settings.

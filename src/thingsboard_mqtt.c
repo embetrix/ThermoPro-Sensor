@@ -19,16 +19,20 @@
  * MA 02111-1307 USA
  */
 
+#define _POSIX_C_SOURCE 200809L
 #include "thingsboard_mqtt.h"
 
+#include <errno.h>
 #include <mosquitto.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define THINGSBOARD_CONNECT_TOPIC "v1/gateway/connect"
 #define THINGSBOARD_TELEMETRY_TOPIC "v1/gateway/telemetry"
+#define MQTT_STATUS_INTERVAL_SECONDS 30
 
 /* Each slot holds one waiting reading, plus at most one message being sent */
 typedef struct {
@@ -49,10 +53,28 @@ struct ThingsBoardMqtt {
     bool connected;
     bool stopping;
     bool thread_started;
+    bool network_stopped;
+    time_t last_status;
     pthread_t thread;
     char host[256];
     int port;
 };
+
+static time_t monotonic_seconds(void)
+{
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return now.tv_sec;
+}
+
+static void log_network_error(ThingsBoardMqtt *output, const char *action, int error, int system_error)
+{
+    char reason[256];
+    const char *detail = mosquitto_strerror(error);
+    if (error == MOSQ_ERR_ERRNO && strerror_r(system_error, reason, sizeof(reason)) == 0)
+        detail = reason;
+    fprintf(stderr, "MQTT %s (%s:%d): %s\n", action, output->host, output->port, detail);
+}
 
 json_object *thingsboard_mqtt_reading_payload(const Sensor *sensor)
 {
@@ -119,7 +141,7 @@ static void on_connect(struct mosquitto *client, void *userdata, int result)
         return;
     }
     if (result == 0) {
-        fprintf(stderr, "MQTT connected\n");
+        fprintf(stderr, "MQTT connected (%s:%d)\n", output->host, output->port);
         send_next(output);
     } else {
         fprintf(stderr, "MQTT connection refused: %s\n", mosquitto_connack_string(result));
@@ -129,12 +151,15 @@ static void on_connect(struct mosquitto *client, void *userdata, int result)
 
 static void on_disconnect(struct mosquitto *client, void *userdata, int result)
 {
+    int system_error = errno;
     (void)client;
     ThingsBoardMqtt *output = userdata;
     pthread_mutex_lock(&output->mutex);
     output->connected = false;
-    if (!output->stopping)
-        fprintf(stderr, "MQTT disconnected: %s\n", mosquitto_strerror(result));
+    if (!output->stopping) {
+        output->last_status = monotonic_seconds();
+        log_network_error(output, "disconnected", result, system_error);
+    }
     pthread_mutex_unlock(&output->mutex);
 }
 
@@ -163,20 +188,28 @@ static void on_publish(struct mosquitto *client, void *userdata, int message_id)
 static void *network_loop(void *userdata)
 {
     ThingsBoardMqtt *output = userdata;
+    fprintf(stderr, "MQTT connecting to %s:%d\n", output->host, output->port);
     int error = mosquitto_connect(output->client, output->host, output->port, 60);
     if (error != MOSQ_ERR_SUCCESS)
-        fprintf(stderr, "MQTT connection pending: %s\n", mosquitto_strerror(error));
+        log_network_error(output, "connection failed, retrying", error, errno);
     error = mosquitto_loop_forever(output->client, 1000, 1);
-    if (error != MOSQ_ERR_SUCCESS)
-        fprintf(stderr, "MQTT network stopped: %s\n", mosquitto_strerror(error));
+    int system_error = errno;
+    pthread_mutex_lock(&output->mutex);
+    output->network_stopped = true;
+    output->connected = false;
+    if (!output->stopping)
+        log_network_error(output, "network stopped, check settings and restart", error, system_error);
+    pthread_mutex_unlock(&output->mutex);
     return NULL;
 }
 
 bool thingsboard_mqtt_open(ThingsBoardMqtt **result, const MqttConfig *config)
 {
     *result = NULL;
-    if (!config->enabled)
+    if (!config->enabled) {
+        fprintf(stderr, "MQTT disabled in config\n");
         return true;
+    }
     if (mosquitto_lib_init() != MOSQ_ERR_SUCCESS)
         return false;
     ThingsBoardMqtt *output = calloc(1, sizeof(*output));
@@ -212,6 +245,7 @@ bool thingsboard_mqtt_open(ThingsBoardMqtt **result, const MqttConfig *config)
     }
     memcpy(output->host, config->host, sizeof(output->host));
     output->port = (int)config->port;
+    output->last_status = monotonic_seconds();
     error = mosquitto_threaded_set(output->client, true);
     if (error != MOSQ_ERR_SUCCESS || pthread_create(&output->thread, NULL, network_loop, output) != 0) {
         fprintf(stderr, "Cannot start MQTT network thread\n");
@@ -257,6 +291,18 @@ void thingsboard_mqtt_report(ThingsBoardMqtt *output, const Sensor *sensors, siz
     }
     if (dropped)
         fprintf(stderr, "MQTT queue full: skipped %zu readings\n", dropped);
+    time_t now = monotonic_seconds();
+    if (!output->connected && !output->stopping && now - output->last_status >= MQTT_STATUS_INTERVAL_SECONDS) {
+        size_t pending = 0;
+        for (size_t i = 0; i < output->capacity; i++)
+            if (output->sensors[i].used)
+                pending++;
+        fprintf(stderr, "MQTT offline (%s:%d): %s, %zu sensors waiting\n",
+                output->host, output->port,
+                output->network_stopped ? "network stopped, check settings and restart" : "waiting for connection or retry",
+                pending);
+        output->last_status = now;
+    }
     send_next(output);
     pthread_mutex_unlock(&output->mutex);
 }
