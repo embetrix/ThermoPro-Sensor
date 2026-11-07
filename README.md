@@ -38,6 +38,8 @@ CMake builds config, decoder, registry, and output code into `thermopro_core`.
 The program and unit tests share this library. The program also links the
 BlueZ scanner. Config settings and sensor data are stored separately.
 
+`config/` holds the example config. `deploy/` holds the systemd unit.
+
 ## Configuration
 
 `config/sensors.json` uses automatic discovery only:
@@ -125,6 +127,44 @@ whole numbers.
 Rebuild and restart after changing these settings. CMake saves them in the
 build directory. They only change packet matching. A different field layout
 or temperature scale needs decoder changes too. Tests use your chosen values.
+
+## Run with systemd
+
+Build the program first. Then run these commands from the project root:
+
+```sh
+sudo install -m 0755 build/thermopro-sensor /usr/local/bin/thermopro-sensor
+sudo install -d -m 0755 /etc/thermopro-sensor
+sudo install -m 0644 config/sensors.json /etc/thermopro-sensor/sensors.json
+sudo install -m 0644 deploy/thermopro-sensor.service /etc/systemd/system/thermopro-sensor.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now thermopro-sensor.service
+```
+
+The config copy command replaces an existing config. Skip that command when
+upgrading if you want to keep your installed settings.
+
+The unit uses a temporary service user created by systemd. It talks to BlueZ
+through the system D-Bus, so that user needs permission to call `org.bluez`.
+The standard BlueZ D-Bus policy on Ubuntu/Debian allows this. The selected
+adapter must be on before scanning can start.
+
+The service starts after BlueZ and restarts after a failure. It stops when
+BlueZ stops. Start it again after bringing BlueZ back. Readings and errors go
+to the journal. See the [systemd service settings](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html).
+
+```sh
+sudo systemctl status thermopro-sensor.service
+sudo journalctl -u thermopro-sensor.service -f -o cat
+```
+
+Edit `/etc/thermopro-sensor/sensors.json` to change service settings, then check
+the config and restart:
+
+```sh
+/usr/local/bin/thermopro-sensor --check-config /etc/thermopro-sensor/sensors.json
+sudo systemctl restart thermopro-sensor.service
+```
 
 ## Tests
 

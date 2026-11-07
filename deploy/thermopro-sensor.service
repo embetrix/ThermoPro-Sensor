@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright 2026 Embetrix Embedded Systems Solutions, ayoub.zaki@embetrix.com
+
+[Unit]
+Description=ThermoPro sensor reader
+Requires=bluetooth.service
+After=bluetooth.service
+
+[Service]
+Type=exec
+DynamicUser=yes
+ExecStart=/usr/local/bin/thermopro-sensor /etc/thermopro-sensor/sensors.json
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=10s
+NoNewPrivileges=yes
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=thermopro-sensor
+
+[Install]
+WantedBy=multi-user.target
