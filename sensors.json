@@ -1,0 +1,6 @@
+{
+  "discover_sensors": true,
+  "polling_period_seconds": 10,
+  "DuplicateData": true,
+  "adapter": "hci0"
+}

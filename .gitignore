@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+/build/
+
+# CMake files from builds in the project root
+/CMakeCache.txt
+/CMakeFiles/
+/CTestTestfile.cmake
+/DartConfiguration.tcl
+/Makefile
+/Testing/
+/cmake_install.cmake
+/compile_commands.json
+
+# Built programs and libraries
+/sensor
+/test_sensor
+/*.a
