@@ -59,6 +59,10 @@ if(BUILD_TESTING)
     target_link_libraries(test_sensor PRIVATE thermopro_core)
     enable_sensor_warnings(test_sensor)
     add_test(NAME sensor_unit COMMAND test_sensor)
+    add_executable(test_sqlite tests/test_sqlite.c)
+    target_link_libraries(test_sqlite PRIVATE thermopro_core)
+    enable_sensor_warnings(test_sqlite)
+    add_test(NAME sensor_sqlite COMMAND test_sqlite)
     add_test(NAME sensor_config COMMAND thermopro-sensor --check-config ${CMAKE_CURRENT_SOURCE_DIR}/config/sensors.json)
 
     option(ENABLE_BLUEZ_INTEGRATION_TESTS "Test with fake BlueZ (needs Python, dbus-fast, and dbus-daemon)" OFF)
@@ -73,6 +77,6 @@ if(BUILD_TESTING)
                     $<TARGET_FILE:thermopro-sensor> ${DBUS_DAEMON}
                     ${THERMOPRO_PAYLOAD_LENGTH_VALUE} ${THERMOPRO_PACKET_MARKER_VALUE}
                     ${THERMOPRO_MAX_HUMIDITY_VALUE})
-        set_tests_properties(sensor_bluez PROPERTIES TIMEOUT 30)
+        set_tests_properties(sensor_bluez PROPERTIES TIMEOUT 60)
     endif()
 endif()

@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import sqlite3
 import sys
 import tempfile
 
@@ -24,7 +25,7 @@ FIRST = f"{ADAPTER}/dev_EC_20_1E_58_25_10"
 SECOND = f"{ADAPTER}/dev_FA_5B_AB_FB_56_D6"
 
 
-async def exercise(binary, bus, address, directory, duplicates, protocol):
+async def exercise(binary, bus, address, directory, duplicates, protocol, logging_mode=None, fail_write=False):
     payload_length, marker, max_humidity = protocol
     warm_humidity = min(48, max_humidity)
     updated_humidity = min(50, max_humidity)
@@ -59,6 +60,9 @@ async def exercise(binary, bus, address, directory, duplicates, protocol):
         "DuplicateData": duplicates,
         "discover_sensors": True,
     }
+    database = Path(directory) / f"{duplicates}-{logging_mode}-{fail_write}.db"
+    if logging_mode:
+        settings["database"] = {"path": str(database), "logging_mode": logging_mode, "max_size_mb": 10}
     first_name = "EC:20:1E:58:25:10"
     second_name = "FA:5B:AB:FB:56:D6"
     config.write_text(json.dumps(settings))
@@ -114,6 +118,7 @@ async def exercise(binary, bus, address, directory, duplicates, protocol):
 
         # Keep only the latest reading in each report period
         await changed(FIRST, {"ManufacturerData": manufacturer(235, warm_humidity)})
+        await changed(FIRST, {"ManufacturerData": manufacturer(235, warm_humidity)})
         await changed(FIRST, {"ManufacturerData": manufacturer(240, updated_humidity)}, ["RSSI"])
         # Ignore invalid packets, other adapters, and RSSI-only updates
         await changed(SECOND, {"ManufacturerData": manufacturer(235, max_humidity + 1)})
@@ -126,9 +131,34 @@ async def exercise(binary, bus, address, directory, duplicates, protocol):
         assert readings[first_name]["humidity_pct"] == updated_humidity
         assert readings[first_name]["rssi_dbm"] is None
         assert readings[second_name] is None
+        # These updates arrive after the report but must not produce new rows
+        await changed(FIRST, {"RSSI": Variant("n", -75)})
+        await changed(FIRST, {"ManufacturerData": manufacturer(235, warm_humidity, valid_marker=False)})
         assert await batch() == {first_name: None, second_name: None}
-        process.send_signal(signal.SIGTERM)
-        assert await asyncio.wait_for(process.wait(), timeout=4) == 0
+        if logging_mode:
+            with sqlite3.connect(database) as db:
+                rows = db.execute("SELECT sensor_address, received_at, temperature_tenths, humidity_pct, battery_low, rssi_dbm FROM readings ORDER BY id").fetchall()
+                assert len(rows) == (3 if logging_mode == "per_report" else 5), rows
+                assert rows[0][0] == first_name and rows[0][2:] == (235, warm_humidity, 0, -67)
+                assert rows[1][0] == second_name and rows[1][2:] == (-55, max_humidity, 1, None)
+                assert rows[-1][2:] == (240, updated_humidity, 0, None)
+                assert all(row[1].endswith("+00:00") for row in rows)
+                if logging_mode == "every_packet":
+                    assert rows[2][2:] == rows[3][2:] == (235, warm_humidity, 0, -67)
+                assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        if fail_write:
+            with sqlite3.connect(database) as db:
+                db.execute("CREATE TRIGGER reject_readings BEFORE INSERT ON readings BEGIN SELECT RAISE(ABORT, 'test write failure'); END")
+            await changed(FIRST, {"ManufacturerData": manufacturer(250, warm_humidity)})
+            assert await asyncio.wait_for(process.wait(), timeout=4) != 0
+            stderr = (await process.stderr.read()).decode()
+            assert "Database error (insert reading)" in stderr, stderr
+            assert "test write failure" in stderr, stderr
+            with sqlite3.connect(database) as db:
+                assert db.execute("SELECT count(*) FROM readings").fetchone()[0] == len(rows)
+        else:
+            process.send_signal(signal.SIGTERM)
+            assert await asyncio.wait_for(process.wait(), timeout=4) == 0
         assert stopped.is_set(), "StopDiscovery was not called on shutdown"
     finally:
         if process.returncode is None:
@@ -157,8 +187,11 @@ async def main():
             bus = await MessageBus(bus_address=address).connect()
             await bus.request_name("org.bluez")
             for duplicates in (True, False):
-                await exercise(binary, bus, address, directory, duplicates, protocol)
-            print("BlueZ tests passed: discovery, DuplicateData, packets, reports, and shutdown")
+                for logging_mode in (None, "per_report", "every_packet"):
+                    await exercise(binary, bus, address, directory, duplicates, protocol, logging_mode)
+            for logging_mode in ("per_report", "every_packet"):
+                await exercise(binary, bus, address, directory, True, protocol, logging_mode, fail_write=True)
+            print("BlueZ tests passed: discovery, DuplicateData, packets, reports, SQLite logging modes, and shutdown")
         finally:
             if bus is not None:
                 bus.disconnect()
