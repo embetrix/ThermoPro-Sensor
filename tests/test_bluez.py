@@ -11,6 +11,9 @@ import signal
 import sqlite3
 import sys
 import tempfile
+from datetime import datetime
+
+from test_mqtt import Broker, CONNECT, TELEMETRY, packet, ack
 
 from dbus_fast import Message, MessageType, Variant
 from dbus_fast.aio import MessageBus
@@ -63,6 +66,48 @@ async def exercise(binary, bus, address, directory, duplicates, protocol, loggin
     database = Path(directory) / f"{duplicates}-{logging_mode}-{fail_write}.db"
     if logging_mode:
         settings["database"] = {"path": str(database), "logging_mode": logging_mode, "max_size_mb": 10}
+    mqtt_broker = None
+    mqtt_task = None
+    mqtt_rows = asyncio.Queue()
+    if duplicates and logging_mode == "per_report" and not fail_write:
+        mqtt_broker = await Broker().start()
+        settings["mqtt"] = {"host": "127.0.0.1", "port": mqtt_broker.port,
+                            "tls": False, "access_token": "test-token"}
+
+    async def collect_mqtt():
+        reader, writer = await mqtt_broker.connection()
+        registered = set()
+        while True:
+            header, body = await packet(reader)
+            if header >> 4 == 14:
+                return
+            assert header >> 4 == 3 and (header >> 1) & 3 == 1
+            length = int.from_bytes(body[:2], "big")
+            topic = body[2:2 + length].decode()
+            mid = body[2 + length:4 + length]
+            data = json.loads(body[4 + length:])
+            if topic == CONNECT:
+                registered.add(data["device"])
+            else:
+                assert topic == TELEMETRY
+                for name, entries in data.items():
+                    assert name in registered
+                    for entry in entries:
+                        mqtt_rows.put_nowait((name, entry))
+            await ack(writer, mid)
+
+    async def check_mqtt(readings):
+        if not mqtt_broker:
+            return
+        expected = {name: value for name, value in readings.items() if value is not None}
+        for _ in expected:
+            name, entry = await asyncio.wait_for(mqtt_rows.get(), 3)
+            value = expected[name]
+            received = datetime.fromisoformat(value["received_at"])
+            assert entry["ts"] == int(received.timestamp()) * 1000 + received.microsecond // 1000
+            fields = {key: item for key, item in value.items() if key != "received_at" and item is not None}
+            assert entry["values"] == fields
+
     first_name = "EC:20:1E:58:25:10"
     second_name = "FA:5B:AB:FB:56:D6"
     config.write_text(json.dumps(settings))
@@ -72,6 +117,9 @@ async def exercise(binary, bus, address, directory, duplicates, protocol, loggin
         env={**os.environ, "DBUS_SYSTEM_BUS_ADDRESS": address},
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
+
+    if mqtt_broker:
+        mqtt_task = asyncio.create_task(collect_mqtt())
 
     async def batch():
         rows = []
@@ -107,6 +155,7 @@ async def exercise(binary, bus, address, directory, duplicates, protocol, loggin
         ))
         await changed(SECOND, {"ManufacturerData": manufacturer(-55, max_humidity, battery_ok=False)})
         readings = await batch()
+        await check_mqtt(readings)
         assert readings[first_name]["temperature_c"] == 23.5
         assert readings[first_name]["humidity_pct"] == warm_humidity
         assert readings[first_name]["battery_low"] is False
@@ -127,6 +176,7 @@ async def exercise(binary, bus, address, directory, duplicates, protocol, loggin
             "ManufacturerData": manufacturer(235, warm_humidity),
         })
         readings = await batch()
+        await check_mqtt(readings)
         assert readings[first_name]["temperature_c"] == 24.0
         assert readings[first_name]["humidity_pct"] == updated_humidity
         assert readings[first_name]["rssi_dbm"] is None
@@ -168,6 +218,13 @@ async def exercise(binary, bus, address, directory, duplicates, protocol, loggin
         if process.returncode:
             print(stderr, file=sys.stderr)
         bus.remove_message_handler(handle)
+        if mqtt_task:
+            mqtt_task.cancel()
+            try:
+                await mqtt_task
+            except (asyncio.CancelledError, asyncio.IncompleteReadError):
+                pass
+            await mqtt_broker.close()
 
 
 async def main():
