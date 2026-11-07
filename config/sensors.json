@@ -2,5 +2,11 @@
   "discover_sensors": true,
   "polling_period_seconds": 10,
   "DuplicateData": true,
-  "adapter": "hci0"
+  "adapter": "hci0",
+  "database": {
+    "path": "readings.db",
+    "retention_days": 30,
+    "max_size_mb": 10,
+    "logging_mode": "per_report"
+  }
 }

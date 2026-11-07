@@ -9,6 +9,9 @@ After=bluetooth.service
 [Service]
 Type=exec
 DynamicUser=yes
+StateDirectory=thermopro-sensor
+StateDirectoryMode=0750
+WorkingDirectory=/var/lib/thermopro-sensor
 ExecStart=/usr/local/bin/thermopro-sensor /etc/thermopro-sensor/sensors.json
 Restart=on-failure
 RestartSec=5s
