@@ -50,6 +50,7 @@ bool thermopro_decode(Sensor *sensor, uint16_t manufacturer, const uint8_t *data
     gmtime_r(&now.tv_sec, &utc);
     strftime(date, sizeof(date), "%Y-%m-%dT%H:%M:%S", &utc);
     snprintf(sensor->received_at, sizeof(sensor->received_at), "%s.%06u+00:00", date, (unsigned)(now.tv_nsec / 1000));
+    sensor->received_at_ms = (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
     sensor->fresh = true;
     return true;
 }

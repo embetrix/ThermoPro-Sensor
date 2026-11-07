@@ -26,10 +26,25 @@
 #include <stdio.h>
 #include <string.h>
 
+static bool config_string(json_object *object, const char *key, char *buffer, size_t capacity)
+{
+    json_object *value;
+    if (!json_object_object_get_ex(object, key, &value))
+        return true;
+    if (!json_object_is_type(value, json_type_string))
+        return false;
+    const char *text = json_object_get_string(value);
+    size_t length = (size_t)json_object_get_string_len(value);
+    if (length >= capacity || strlen(text) != length)
+        return false;
+    memcpy(buffer, text, length + 1);
+    return true;
+}
+
 /* Check the config without using Bluetooth */
 bool app_config_parse(json_object *root, AppConfig *config)
 {
-    json_object *period, *duplicates, *adapter, *discovery, *database;
+    json_object *period, *duplicates, *adapter, *discovery, *database, *mqtt;
     const char *adapter_name = "hci0";
     const char *error = NULL;
 
@@ -42,8 +57,8 @@ bool app_config_parse(json_object *root, AppConfig *config)
         (void)value;
         REQUIRE(!strcmp(key, "polling_period_seconds") ||
                 !strcmp(key, "DuplicateData") || !strcmp(key, "adapter") ||
-                !strcmp(key, "discover_sensors") || !strcmp(key, "database"),
-                "unknown config key (use polling_period_seconds, DuplicateData, adapter, discover_sensors, database)");
+                !strcmp(key, "discover_sensors") || !strcmp(key, "database") || !strcmp(key, "mqtt"),
+                "unknown config key (use polling_period_seconds, DuplicateData, adapter, discover_sensors, database, mqtt)");
     }
     if (json_object_object_get_ex(root, "discover_sensors", &discovery)) {
         REQUIRE(json_object_is_type(discovery, json_type_boolean) && json_object_get_boolean(discovery),
@@ -108,6 +123,52 @@ bool app_config_parse(json_object *root, AppConfig *config)
             config->database.logging_mode = !strcmp(mode_text, "every_packet") ?
                                            DATABASE_EVERY_PACKET : DATABASE_PER_REPORT;
         }
+    }
+    config->mqtt.tls = true;
+    config->mqtt.port = 8883;
+    config->mqtt.max_pending_sensors = 256;
+    if (json_object_object_get_ex(root, "mqtt", &mqtt)) {
+        json_object *value;
+        REQUIRE(json_object_is_type(mqtt, json_type_object), "mqtt must be an object");
+        json_object_object_foreach(mqtt, key, item) {
+            (void)item;
+            REQUIRE(!strcmp(key, "enabled") || !strcmp(key, "host") || !strcmp(key, "port") ||
+                    !strcmp(key, "tls") || !strcmp(key, "access_token") || !strcmp(key, "ca_file") ||
+                    !strcmp(key, "max_pending_sensors"), "unknown mqtt config key");
+        }
+        config->mqtt.enabled = true;
+        if (json_object_object_get_ex(mqtt, "enabled", &value)) {
+            REQUIRE(json_object_is_type(value, json_type_boolean), "mqtt.enabled must be true or false");
+            config->mqtt.enabled = json_object_get_boolean(value);
+        }
+        if (json_object_object_get_ex(mqtt, "tls", &value)) {
+            REQUIRE(json_object_is_type(value, json_type_boolean), "mqtt.tls must be true or false");
+            config->mqtt.tls = json_object_get_boolean(value);
+        }
+        config->mqtt.port = config->mqtt.tls ? 8883 : 1883;
+        if (json_object_object_get_ex(mqtt, "port", &value)) {
+            REQUIRE(json_object_is_type(value, json_type_int) && json_object_get_int64(value) >= 1 &&
+                    json_object_get_int64(value) <= 65535, "mqtt.port must be an integer from 1 to 65535");
+            config->mqtt.port = (unsigned)json_object_get_int64(value);
+        }
+        if (json_object_object_get_ex(mqtt, "max_pending_sensors", &value)) {
+            REQUIRE(json_object_is_type(value, json_type_int) && json_object_get_int64(value) >= 1 &&
+                    json_object_get_int64(value) <= 10000,
+                    "mqtt.max_pending_sensors must be an integer from 1 to 10000");
+            config->mqtt.max_pending_sensors = (unsigned)json_object_get_int64(value);
+        }
+        REQUIRE(config_string(mqtt, "host", config->mqtt.host, sizeof(config->mqtt.host)),
+                "mqtt.host must be a string of at most 255 bytes without NUL bytes");
+        REQUIRE(config_string(mqtt, "access_token", config->mqtt.access_token, sizeof(config->mqtt.access_token)),
+                "mqtt.access_token must be a string of at most 1023 bytes without NUL bytes");
+        REQUIRE(config_string(mqtt, "ca_file", config->mqtt.ca_file, sizeof(config->mqtt.ca_file)),
+                "mqtt.ca_file must be a string of at most 4095 bytes without NUL bytes");
+        REQUIRE(!strstr(config->mqtt.host, "://"), "mqtt.host must be a hostname or IP address without a URL scheme");
+        for (const char *p = config->mqtt.host; *p; p++)
+            REQUIRE(!isspace((unsigned char)*p) && *p != '/', "mqtt.host must not contain spaces or slashes");
+        REQUIRE(!config->mqtt.enabled || (config->mqtt.host[0] && config->mqtt.access_token[0]),
+                "enabled MQTT needs mqtt.host and mqtt.access_token");
+        REQUIRE(config->mqtt.tls || !config->mqtt.ca_file[0], "mqtt.ca_file requires mqtt.tls=true");
     }
     return true;
 fail:

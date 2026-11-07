@@ -9,6 +9,8 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(JSON_C REQUIRED IMPORTED_TARGET json-c)
 pkg_check_modules(SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
 find_package(SQLite3 REQUIRED)
+find_package(Threads REQUIRED)
+pkg_check_modules(MOSQUITTO REQUIRED IMPORTED_TARGET libmosquitto>=2.0.12)
 
 function(sensor_protocol_option name default description minimum maximum)
     set(${name} "${default}" CACHE STRING "${description}")
@@ -40,9 +42,10 @@ add_library(thermopro_core STATIC
     src/thermopro_decoder.c
     src/sensor_registry.c
     src/json_output.c
-    src/sqlite_store.c)
+    src/sqlite_store.c
+    src/mqtt_output.c)
 target_include_directories(thermopro_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(thermopro_core PUBLIC PkgConfig::JSON_C SQLite::SQLite3)
+target_link_libraries(thermopro_core PUBLIC PkgConfig::JSON_C SQLite::SQLite3 PkgConfig::MOSQUITTO Threads::Threads)
 target_compile_definitions(thermopro_core PUBLIC
     THERMOPRO_PAYLOAD_LENGTH=${THERMOPRO_PAYLOAD_LENGTH_VALUE}
     THERMOPRO_PACKET_MARKER=${THERMOPRO_PACKET_MARKER_VALUE}

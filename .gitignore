@@ -23,3 +23,7 @@ __pycache__/
 *.db
 *.db-wal
 *.db-shm
+
+# Local MQTT settings
+/config/sensors.local.json
+/test_mqtt

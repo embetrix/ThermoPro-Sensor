@@ -40,10 +40,21 @@ typedef struct {
 } DatabaseConfig;
 
 typedef struct {
+    bool enabled;
+    bool tls;
+    unsigned port;
+    unsigned max_pending_sensors;
+    char host[256];
+    char access_token[1024];
+    char ca_file[4096];
+} MqttConfig;
+
+typedef struct {
     unsigned polling_period_seconds;
     bool duplicate_data;
     char adapter_path[64];
     DatabaseConfig database;
+    MqttConfig mqtt;
 } AppConfig;
 
 /* Check discovery settings and fill the config */

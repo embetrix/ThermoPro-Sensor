@@ -36,6 +36,7 @@ typedef struct {
     unsigned humidity;
     bool battery_low;
     char received_at[40];
+    int64_t received_at_ms;
 } Sensor;
 
 #endif
