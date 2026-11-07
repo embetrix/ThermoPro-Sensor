@@ -47,9 +47,9 @@ target_compile_definitions(thermopro_core PUBLIC
     THERMOPRO_MAX_HUMIDITY=${THERMOPRO_MAX_HUMIDITY_VALUE})
 enable_sensor_warnings(thermopro_core)
 
-add_executable(sensor src/main.c src/bluez_scanner.c)
-target_link_libraries(sensor PRIVATE thermopro_core PkgConfig::SYSTEMD)
-enable_sensor_warnings(sensor)
+add_executable(thermopro-sensor src/main.c src/bluez_scanner.c)
+target_link_libraries(thermopro-sensor PRIVATE thermopro_core PkgConfig::SYSTEMD)
+enable_sensor_warnings(thermopro-sensor)
 
 include(CTest)
 if(BUILD_TESTING)
@@ -57,7 +57,7 @@ if(BUILD_TESTING)
     target_link_libraries(test_sensor PRIVATE thermopro_core)
     enable_sensor_warnings(test_sensor)
     add_test(NAME sensor_unit COMMAND test_sensor)
-    add_test(NAME sensor_config COMMAND sensor --check-config ${CMAKE_CURRENT_SOURCE_DIR}/config/sensors.json)
+    add_test(NAME sensor_config COMMAND thermopro-sensor --check-config ${CMAKE_CURRENT_SOURCE_DIR}/config/sensors.json)
 
     option(ENABLE_BLUEZ_INTEGRATION_TESTS "Test with fake BlueZ (needs Python, dbus-fast, and dbus-daemon)" OFF)
     if(ENABLE_BLUEZ_INTEGRATION_TESTS)
@@ -68,7 +68,7 @@ if(BUILD_TESTING)
         endif()
         add_test(NAME sensor_bluez
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bluez.py
-                    $<TARGET_FILE:sensor> ${DBUS_DAEMON}
+                    $<TARGET_FILE:thermopro-sensor> ${DBUS_DAEMON}
                     ${THERMOPRO_PAYLOAD_LENGTH_VALUE} ${THERMOPRO_PACKET_MARKER_VALUE}
                     ${THERMOPRO_MAX_HUMIDITY_VALUE})
         set_tests_properties(sensor_bluez PROPERTIES TIMEOUT 30)

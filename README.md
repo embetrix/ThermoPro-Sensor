@@ -1,6 +1,6 @@
 # ThermoPro sensor reader
 
-`sensor` is a Linux C program that finds ThermoPro sensors through BlueZ.
+`thermopro-sensor` is a Linux C program that finds ThermoPro sensors through BlueZ.
 It listens for Bluetooth LE broadcasts and prints one JSON line per sensor.
 The default report period is 10 seconds. You do not need to enter sensor
 addresses, pair devices, or install Python to run it.
@@ -13,7 +13,7 @@ On Ubuntu/Debian, install the build dependencies and Bluetooth service:
 sudo apt install build-essential cmake pkg-config libsystemd-dev libjson-c-dev bluez
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-./build/sensor config/sensors.json
+./build/thermopro-sensor config/sensors.json
 ```
 
 BlueZ must be running and the selected Bluetooth adapter must be on.
@@ -70,7 +70,7 @@ Restart after changing the config. If you omit the path, the program reads
 Check the config without using Bluetooth:
 
 ```sh
-./build/sensor --check-config config/sensors.json
+./build/thermopro-sensor --check-config config/sensors.json
 ```
 
 Example output:
